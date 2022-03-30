@@ -1019,7 +1019,7 @@ contract Mafiameta is IERC20, Ownable {
     ) private {
         uint256 rAmount = tAmount.mul(currentRate);
         _rOwned[to] = _rOwned[to].add(rAmount);
-        emit Transfer(sender, to, tAmount);
+        emit git(sender, to, tAmount);
     }
 
     function _takeInviterFee(
