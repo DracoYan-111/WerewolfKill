@@ -582,10 +582,7 @@ contract WerewolfKill is IERC20, Ownable {
     }
 
     /**
-    * @dev 买入
-    *
-    *
-    *
+    * @dev buy or sell
     */
     function _tokenTransferBuyOrSell(
         address restrictedAddress,
@@ -597,11 +594,11 @@ contract WerewolfKill is IERC20, Ownable {
             uint256 dividendFee_ = amount.div(_denominatorOfFee).mul(_dividendFee);
             uint256 liquidityFee_ = amount.div(_denominatorOfFee).mul(_liquidityFee);
 
-            //转移至该token合约，等待注入流动性
+            // Transfer to the token contract and wait for the injection of liquidity
             _tokenTransfer(from, address(this), dividendFee_);
-            //转移至资金管理合约，等待lp分红
+            // Transfer to the fund management contract and wait for lp dividends
             _tokenTransfer(from, address(stc), liquidityFee_);
-            //原有金额减去销毁数量，剩余转移至用户地址
+            // The original amount minus the amount of destruction, and the rest is transferred to the user's address
             _tokenTransfer(from, to, amount.sub(dividendFee_ + liquidityFee_));
 
         } else {
