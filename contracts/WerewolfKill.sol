@@ -303,6 +303,8 @@ contract WerewolfKill is IERC20, Ownable {
     using SafeMath for uint256;
     using TransferHelper for address;
 
+    event SwapAndLiquify(uint256 tokensSwapped, uint256 ethReceived, uint256 tokensIntoLiqudity);
+
     mapping(address => uint256) private _balances;
 
     mapping(address => mapping(address => uint256)) private _allowances;
@@ -606,6 +608,89 @@ contract WerewolfKill is IERC20, Ownable {
         }
     }
 
+
+    /**
+    * @dev swap and add lp
+    *
+    *
+    */
+    function swapAndLiquify() public {
+
+        uint256 half = _balances[address(this)].div(2);
+
+        swapTokensForETH(half);
+
+        uint256 otherHalf = _balances[address(this)];
+        uint256 newBalance = IERC20(husdtTokenAddress).balanceOf(address(this));
+
+        addLiquidityUSDT(otherHalf, newBalance);
+
+        emit SwapAndLiquify(half, newBalance, otherHalf);
+    }
+
+
+    /**
+    * @dev 将代币换成Usdt
+    */
+    function swapTokensForETH(uint256 tokenAmount) public {
+
+        address[] memory path = new address[](3);
+        path[0] = address(this);
+        path[1] = husdtTokenAddress;
+        path[2] = _uniswapV2Router.WETH();
+
+        _approve(address(this), pancakeRouterAddress, tokenAmount);
+
+        _uniswapV2Router.swapExactTokensForETH(
+            tokenAmount,
+            0, // accept any amount of ETH
+            path,
+            address(this),
+            block.timestamp
+        );
+        swapEthForUSDT();
+
+    }
+
+    /**
+    * @dev 将代币换成Usdt
+    */
+    function swapEthForUSDT() public {
+        uint256 balanceETH = address(this).balance;
+
+        address[] memory path = new address[](3);
+        path[0] = _uniswapV2Router.WETH();
+        path[1] = address(0x78867BbEeF44f2326bF8DDd1941a4439382EF2A7);
+        path[2] = husdtTokenAddress;
+
+        _uniswapV2Router.swapExactETHForTokens{value : balanceETH}(
+            1, // accept any amount of ETH
+            path,
+            address(this),
+            block.timestamp
+        );
+    }
+
+    //增加流动性
+    //代币数量 以太币数量
+    function addLiquidityUSDT(uint256 tokenAmount, uint256 husdtAmount) public {
+
+        _approve(address(this), pancakeRouterAddress, tokenAmount);
+        IERC20(husdtTokenAddress).approve(pancakeRouterAddress, husdtAmount);
+
+        _uniswapV2Router.addLiquidity(
+            address(this),
+            husdtTokenAddress,
+            tokenAmount,
+            husdtAmount,
+            1, // slippage is unavoidable
+            1, // slippage is unavoidable
+            owner(),
+            block.timestamp
+        );
+
+    }
+
     /*  *//**
     * @dev 卖出
     *
@@ -680,6 +765,10 @@ contract WerewolfKill is IERC20, Ownable {
         }
         }
     }
+
+    //to recieve ETH from uniswapV2Router when swaping
+    //交换时从 uniswapV2Router 接收 ETH
+    receive() external payable {}
 
     // ========== onlyOwner ==========
     function setBlack(address account, bool state) public onlyOwner {
