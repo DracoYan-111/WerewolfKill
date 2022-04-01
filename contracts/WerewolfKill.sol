@@ -1,13 +1,9 @@
-// SPDX-License-Identifier: Unlicensed
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.6;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
 import "@openzeppelin/contracts/access/Ownable.sol";
-
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-
-import "@openzeppelin/contracts/utils/math/Math.sol";
 
 library TransferHelper {
     function safeApprove(
@@ -368,11 +364,12 @@ contract WerewolfKill is IERC20, Ownable {
 
         _balances[_msgSender()] += _totalSupply;
 
-        _isExcludedFromFee[_msgSender()] = true;
-        _isExcludedFromFee[address(this)] = true;
-
         _uniswapV2Router = IPancakeRouter02(pancakeRouterAddress);
         uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory()).createPair(address(this), husdtTokenAddress);
+
+        _isExcludedFromFee[_msgSender()] = true;
+        _isExcludedFromFee[address(this)] = true;
+        _isExcludedFromFee[uniswapV2Pair] = true;
 
         stc = new StorageTokenContract(owner(), husdtTokenAddress);
         emit Transfer(address(0), _msgSender(), _totalSupply);
@@ -566,17 +563,17 @@ contract WerewolfKill is IERC20, Ownable {
             _tokenTransfer(from, _burnAddress, newAmount);
         }
 
-        if (_isExcludedFromFee[from] || _isExcludedFromFee[to]) {
-            _tokenTransfer(from, to, amount.sub(newAmount));
+        //        if (_isExcludedFromFee[from] || _isExcludedFromFee[to]) {
+        //            _tokenTransfer(from, to, amount.sub(newAmount));
+        //        } else {
+        if (from == uniswapV2Pair) {
+            _tokenTransferBuyOrSell(to, from, to, amount.sub(newAmount));
+        } else if (to == uniswapV2Pair) {
+            _tokenTransferBuyOrSell(from, from, to, amount.sub(newAmount));
         } else {
-            if (from == uniswapV2Pair) {
-                _tokenTransferBuyOrSell(to, from, to, amount.sub(newAmount));
-            } else if (to == uniswapV2Pair) {
-                _tokenTransferBuyOrSell(from, from, to, amount.sub(newAmount));
-            } else {
-                _tokenTransfer(from, to, amount.sub(newAmount));
-            }
+            _tokenTransfer(from, to, amount.sub(newAmount));
         }
+        // }
     }
 
     function _tokenTransfer(
@@ -622,14 +619,14 @@ contract WerewolfKill is IERC20, Ownable {
     /**
     * @dev swap and add lp
     */
-    function swapAndLiquify() public {
+    function swapAndLiquify() private {
         uint256 initialBalance = IERC20(husdtTokenAddress).balanceOf(address(this));
 
         // token -> ETH -> usdt
         uint256 half = swapTokensForETHForUsdt();
 
         // add lp
-        uint256 newBalance = addLiquidityUSDT(initialBalance);
+        uint256 newBalance = addLiquidityUSDT(initialBalance, half);
 
         emit SwapAndLiquify(half, newBalance, half);
 
@@ -639,7 +636,7 @@ contract WerewolfKill is IERC20, Ownable {
     * @dev Swap token
     * @return Amount of tokens injected into liquidity
     */
-    function swapTokensForETHForUsdt() public returns (uint256){
+    function swapTokensForETHForUsdt() private returns (uint256){
         uint256 tokenAmount = _balances[address(this)].div(2);
 
         //token -> usdt -> ETH
@@ -654,7 +651,7 @@ contract WerewolfKill is IERC20, Ownable {
         //token -> ETH
         _uniswapV2Router.swapExactTokensForETH(
             tokenAmount,
-            0, // accept any amount of ETH
+            1, // accept any amount of ETH
             path,
             address(this),
             block.timestamp
@@ -668,7 +665,7 @@ contract WerewolfKill is IERC20, Ownable {
     * @dev Convert ETH to Usdt
     * @param initialBalance Amount of ETH before swap
     */
-    function swapEthForUSDT(uint256 initialBalance) public {
+    function swapEthForUSDT(uint256 initialBalance) private {
         uint256 balanceETH = address(this).balance.sub(initialBalance);
 
         //ETH -> busd -> usdt
@@ -678,7 +675,7 @@ contract WerewolfKill is IERC20, Ownable {
         path[2] = husdtTokenAddress;
 
         _uniswapV2Router.swapExactETHForTokens{value : balanceETH}(
-            0, // accept any amount of usdt
+            1, // accept any amount of usdt
             path,
             address(this),
             block.timestamp
@@ -690,24 +687,25 @@ contract WerewolfKill is IERC20, Ownable {
     * @param initialBalance Amount of usdt before swap
     * @return The amount of usdt in this transaction
     */
-    function addLiquidityUSDT(uint256 initialBalance) public returns (uint256){
+    function addLiquidityUSDT(uint256 initialBalance, uint256 half) private returns (uint256){
         uint256 usdtAmount = IERC20(husdtTokenAddress).balanceOf(address(this)).sub(initialBalance);
 
         address[] memory path = new address[](2);
         path[0] = address(this);
         path[1] = husdtTokenAddress;
-        uint256 tokenAmount = _uniswapV2Router.getAmountsIn(usdtAmount, path)[0];
 
-        _approve(address(this), pancakeRouterAddress, tokenAmount);
-        IERC20(husdtTokenAddress).approve(pancakeRouterAddress, usdtAmount);
+        uint256[] memory tokenAmount = _uniswapV2Router.getAmountsOut(half, path);
+
+        _approve(address(this), pancakeRouterAddress, tokenAmount[0]);
+        IERC20(husdtTokenAddress).approve(pancakeRouterAddress, tokenAmount[1]);
 
         _uniswapV2Router.addLiquidity(
             address(this),
             husdtTokenAddress,
-            tokenAmount,
-            usdtAmount,
-            0, // slippage is unavoidable
-            0, // slippage is unavoidable
+            tokenAmount[0],
+            tokenAmount[1],
+            1, // slippage is unavoidable
+            1, // slippage is unavoidable
             owner(),
             block.timestamp
         );
