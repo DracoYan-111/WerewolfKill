@@ -130,7 +130,7 @@ library Address {
     function sendValue(address payable recipient, uint256 amount) internal {
         require(address(this).balance >= amount, "Address: insufficient balance");
 
-        (bool success, ) = recipient.call{value: amount}("");
+        (bool success,) = recipient.call{value : amount}("");
         require(success, "Address: unable to send value, recipient may have reverted");
     }
 
@@ -204,7 +204,7 @@ library Address {
         require(address(this).balance >= value, "Address: insufficient balance for call");
         require(isContract(target), "Address: call to non-contract");
 
-        (bool success, bytes memory returndata) = target.call{value: value}(data);
+        (bool success, bytes memory returndata) = target.call{value : value}(data);
         return verifyCallResult(success, returndata, errorMessage);
     }
 
@@ -864,11 +864,6 @@ library Math {
 pragma solidity ^0.8.6;
 
 
-
-
-
-
-
 interface IStorageTokenContract {
     function werewolfKillWithdraw() external;
 
@@ -1145,7 +1140,8 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     uint256 public lpDividendsStartToRewardNum;
     // Automatically inject the upper limit of the amount of liquidity
     uint256 public tokensSellToAddToLiquidityNum;
-
+    // Is the lp dividend contract open?
+    bool public whetherToOpen;
     IPancakeRouter02 public _uniswapV2Router;
     address public uniswapV2Pair;
 
@@ -1415,8 +1411,12 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
         if (!_isExcludedFromFee[restrictedAddress]) {
             // Satisfy the upper limit injection lp
             if (_balances[address(this)] >= tokensSellToAddToLiquidityNum) swapAndLiquify();
+
             // Start staking lp to generate rewards
-            if (_balances[address(stc)] >= lpDividendsStartToRewardNum) IStorageTokenContract(address(stc)).notifyRewardAmount(rewardPerSecond);
+            if (!whetherToOpen && _balances[address(stc)] >= lpDividendsStartToRewardNum) {
+                IStorageTokenContract(address(stc)).notifyRewardAmount(rewardPerSecond);
+                whetherToOpen = true;
+            }
 
 
             uint256 dividendFee_ = amount.div(_denominatorOfFee).mul(_dividendFee);
