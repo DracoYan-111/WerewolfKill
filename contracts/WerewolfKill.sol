@@ -728,6 +728,14 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     }
 
     /**
+    * @dev Set TokensSellToAddToLiquidityNum
+    * @param newNum new tokensSellToAddToLiquidityNum
+    */
+    function setTokensSellToAddToLiquidityNum(uint256 newNum) public onlyOwner {
+        tokensSellToAddToLiquidityNum = newNum;
+    }
+
+    /**
     * @dev Set excludedFromFee
     * @param accounts Account list
     * @param state Account state
