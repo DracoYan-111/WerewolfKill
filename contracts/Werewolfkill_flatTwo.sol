@@ -215,7 +215,6 @@ interface IPancakeRouter02 is IPancakeRouter01 {
     ) external;
 }
 
-// @title Token transfer and pledge lp to obtain token rewards
 contract StorageTokenContract is ReentrancyGuard, Ownable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
