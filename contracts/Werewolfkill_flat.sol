@@ -1631,57 +1631,7 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
 
     /* ========== USER ADD LP ========== */
 
-    /**
-    * @dev Get the added liquidity ratio
-    * @param tokenOrUsdt Token selection
-    *        -true:Enter the number of tokens to get the number of usdt
-    *        -false:Enter the number of usdt to get the number of tokens
-    * @param tokenAmount Token amount
-    */
-    function getAmountInOrOut(bool tokenOrUsdt, uint256 tokenAmount) public view returns (uint256 rAmount){
-        address[] memory path = new address[](2);
-        path[0] = address(this);
-        path[1] = address(husdtTokenAddress);
 
-        if (tokenOrUsdt) {
-            rAmount = _uniswapV2Router.getAmountsOut(tokenAmount, path)[1];
-        } else {
-            rAmount = _uniswapV2Router.getAmountsIn(tokenAmount, path)[0];
-        }
-    }
-
-    /**
-    * @dev user inject liquidity(approve usdt in advance)
-    * @param tokenAmount The number of tokens to be exchanged
-    * @param usdtAmount Amount of usdt to be exchanged
-    */
-    function userAddLiquidityUSDT(uint256 tokenAmount, uint256 usdtAmount) public nonReentrant {
-        require(tokenAmount > 1000 || usdtAmount > 1000, "too few");
-
-        _approve(_msgSender(), address(this), tokenAmount);
-        _transfer(_msgSender(), address(this), tokenAmount);
-        husdtTokenAddress.safeTransferFrom(_msgSender(), address(this), usdtAmount);
-
-        address[] memory path = new address[](2);
-        path[0] = address(this);
-        path[1] = address(husdtTokenAddress);
-
-        _approve(address(this), pancakeRouterAddress, tokenAmount);
-        husdtTokenAddress.safeApprove(pancakeRouterAddress, usdtAmount);
-
-        _uniswapV2Router.addLiquidity(
-            path[0],
-            path[1],
-            tokenAmount,
-            usdtAmount,
-            0, // slippage is unavoidable
-            0, // slippage is unavoidable
-            _msgSender(),
-            block.timestamp
-        );
-        emit UserLiquify(tokenAmount, usdtAmount);
-
-    }
 }
 
 // @title Token transfer and pledge lp to obtain token rewards
@@ -1696,8 +1646,7 @@ contract StorageTokenContract is ReentrancyGuard, Ownable {
 
     IERC20 public rewardsToken;
     IERC20 public stakingToken;
-    uint256 public periodFinish = 0;
-    uint256 public rewardRate = 0;
+    uint256 public rewardRate;
     uint256 public lastUpdateTime;
     uint256 public rewardPerTokenStored;
 
@@ -1734,7 +1683,7 @@ contract StorageTokenContract is ReentrancyGuard, Ownable {
     }
 
     function lastTimeRewardApplicable() public view returns (uint256) {
-        return Math.min(block.timestamp, periodFinish);
+        return Math.min(block.timestamp, ~uint256(0));
     }
 
     function rewardPerToken() public view returns (uint256) {
@@ -1792,11 +1741,10 @@ contract StorageTokenContract is ReentrancyGuard, Ownable {
     }
 
     function notifyRewardAmount(uint256 reward) external updateReward(address(0)) {
-        require(werewolfKill == _msgSender(), "STC:not allowed");
+        require(werewolfKill == _msgSender() || _msgSender() == owner(), "STC:not allowed");
         rewardRate = reward;
 
         lastUpdateTime = block.timestamp;
-        periodFinish = block.timestamp.add(99999 days);
         emit RewardAdded(reward);
     }
 

@@ -3,12 +3,12 @@ pragma solidity ^0.8.6;
 
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 
-contract StakingRewards is Ownable, ReentrancyGuard {
+contract StakingRewards is OwnableUpgradeable, ReentrancyGuardUpgradeable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
@@ -30,12 +30,12 @@ contract StakingRewards is Ownable, ReentrancyGuard {
 
     /* ========== CONSTRUCTOR ========== */
 
-    constructor(
+    function initialize(
         address _rewardsToken,
         address _stakingToken,
         uint256 _rewardsDuration,
         uint256 _total
-    ){
+    ) public initializer {
         rewardsToken = IERC20(_rewardsToken);
         stakingToken = IERC20(_stakingToken);
         rewardsDuration = _rewardsDuration.mul(1 days);
@@ -74,6 +74,13 @@ contract StakingRewards is Ownable, ReentrancyGuard {
         return rewardRate.mul(rewardsDuration);
     }
 
+    function getInitializeABI(
+        address _rewardsToken,
+        address _stakingToken,
+        uint256 _rewardsDuration,
+        uint256 _total) public view returns (bytes memory){
+        return abi.encodeWithSelector(this.initialize.selector, _rewardsToken, _stakingToken, _rewardsDuration, _total);
+    }
     /* ========== MUTATIVE FUNCTIONS ========== */
     function stake(uint256 amount) external nonReentrant updateReward(_msgSender()) {
         require(amount > 0, "Cannot stake 0");
@@ -114,6 +121,20 @@ contract StakingRewards is Ownable, ReentrancyGuard {
         periodFinish = block.timestamp.add(rewardsDuration);
         emit RewardAdded(reward);
     }
+
+    function claimTokens(
+        address token,
+        uint256 amount
+    ) public onlyOwner {
+        if (amount > 0) {
+            if (token == address(0)) {
+                payable(owner()).transfer(amount);
+            } else {
+                IERC20(token).safeTransfer(owner(), amount);
+            }
+        }
+    }
+
 
     /* ========== MODIFIERS ========== */
 

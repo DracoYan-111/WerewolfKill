@@ -8,12 +8,20 @@ import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-interface IStorageTokenContract {
-    function werewolfKillWithdraw() external;
 
-    function notifyRewardAmount(uint256 reward) external;
+/// @title StorageTokenContract contract interface
+interface IStorageTokenContract {
+    function transferToken(address contractAddr) external returns (uint256 balance);
 }
 
+/// @title lpDividend contract interface
+interface ILpDividend {
+    function notifyRewardAmount(uint256 reward, uint256 timestamp) external;
+
+    function transferToken(address contractAddr) external returns (uint256 balance);
+}
+
+/// @title UniswapV2Factory contract interface
 interface IUniswapV2Factory {
     event PairCreated(
         address indexed token0,
@@ -44,6 +52,7 @@ interface IUniswapV2Factory {
     function setFeeToSetter(address) external;
 }
 
+/// @title PancakeRouter01 contract interface
 interface IPancakeRouter01 {
     function factory() external pure returns (address);
 
@@ -203,6 +212,7 @@ interface IPancakeRouter01 {
     returns (uint256[] memory amounts);
 }
 
+/// @title PancakeRouter02 and PancakeRouter01 contract interface
 interface IPancakeRouter02 is IPancakeRouter01 {
     function removeLiquidityETHSupportingFeeOnTransferTokens(
         address token,
@@ -250,13 +260,15 @@ interface IPancakeRouter02 is IPancakeRouter01 {
     ) external;
 }
 
-
+/// @title WerewolfKill token contract
+/// @author Long
+/// @notice This contract is the WerewolfKill token contract
 contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
     event SwapAndLiquify(uint256 tokensSwapped, uint256 usdtReceived, uint256 tokensIntoLiqudity);
-    event UserLiquify(uint256 tokensSwapped, uint256 usdtReceived);
+    event UserAddLiquify(uint256 tokensSwapped, uint256 usdtReceived);
 
     mapping(address => uint256) private _balances;
     mapping(address => mapping(address => uint256)) private _allowances;
@@ -284,23 +296,27 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     uint256 public lpDividendsStartToRewardNum;
     // Automatically inject the upper limit of the amount of liquidity
     uint256 public tokensSellToAddToLiquidityNum;
-    // Is the lp dividend contract open?
-    bool public whetherToOpen;
 
     IPancakeRouter02 public _uniswapV2Router;
     address public uniswapV2Pair;
 
-    // main
+    /// @dev main chain
     //address public pancakeRouterAddress = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
     //IERC20 public husdtTokenAddress = IERC20(0x55d398326f99059fF775485246999027B3197955);
-    // test
+
+    /// @dev test chain
     address public pancakeRouterAddress = 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3;
     IERC20 public husdtTokenAddress = IERC20(0x7ef95a0FEE0Dd31b22626fA2e10Ee6A223F8a684);
+    //token -> usdt
+    address[]  path = new address[](2);
 
     //Black hole address
     address private _burnAddress = 0x000000000000000000000000000000000000dEaD;
 
-    StorageTokenContract public stc;
+    /// @dev external contract
+    address public stc;
+    address public lp;
+    uint256 public ldContractAmount;
 
     /**
      * @dev Sets the values for {name} and {symbol}.
@@ -312,27 +328,37 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
      * construction.
      */
     constructor(
+        address ld_,
         uint256 total_,
         uint256 addLpMax_,
         uint256 dividendsMax_,
         uint256 rewardPerSecond_
     ) {
+        /// @dev Token Information
         _name = "LLL";
         _symbol = "LLL";
         _totalSupply = total_ * 10 ** decimals();
 
+        /// @dev Additional Information
         rewardPerSecond = rewardPerSecond_;
         lpDividendsStartToRewardNum = dividendsMax_ * 10 ** decimals();
         tokensSellToAddToLiquidityNum = addLpMax_ * 10 ** decimals();
         _balances[_msgSender()] += _totalSupply;
 
+        /// @dev Swap Information
         _uniswapV2Router = IPancakeRouter02(pancakeRouterAddress);
         uniswapV2Pair = IUniswapV2Factory(_uniswapV2Router.factory()).createPair(address(this), address(husdtTokenAddress));
+        path[0] = address(this);
+        path[1] = address(husdtTokenAddress);
 
+        /// @dev Other Information
         _isExcludedFromFee[_msgSender()] = true;
         _isExcludedFromFee[address(this)] = true;
 
-        stc = new StorageTokenContract(uniswapV2Pair, owner(), address(this), husdtTokenAddress);
+        /// @dev External contract Information
+        stc = address(new storageTokenContract(husdtTokenAddress));
+        lp = ld_;
+
         emit Transfer(address(0), _msgSender(), _totalSupply);
     }
 
@@ -507,9 +533,8 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
         address to,
         uint256 amount
     ) internal virtual {
-        require(from != address(0), "ERC20: transfer from the zero address");
-        require(to != address(0), "ERC20: transfer to the zero address");
-        require(amount > 10000, "Transfer amount must be greater than 1000");
+        require(from != address(0) && to != address(0), "ERC20: transfer the zero address");
+        require(amount > 10000, "Transfer amount must be greater than 10000");
         require(!_blackList[from] && !_blackList[to], "Cannot be blacklisted");
 
         uint256 fromBalance = _balances[from];
@@ -517,13 +542,14 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     unchecked {
         _balances[from] = fromBalance - amount;
     }
-
-        uint256 newAmount;
+        /// @dev User transfer fee
+        uint256 newAmount = 0;
         if (takeFee) {
             newAmount = amount.div(_denominatorOfFee).mul(_burnFee);
             _tokenTransfer(from, _burnAddress, newAmount);
         }
 
+        /// @dev User buys and sells
         if (from == uniswapV2Pair) {
             _tokenTransferBuyOrSell(to, from, to, amount.sub(newAmount));
         } else if (to == uniswapV2Pair) {
@@ -559,15 +585,17 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     ) private {
         // Check if the transaction originator is Excluded From Fee
         if (!_isExcludedFromFee[restrictedAddress]) {
-            // Satisfy the upper limit injection lp
-            if (_balances[address(this)] >= tokensSellToAddToLiquidityNum) swapAndLiquify();
-            // Start staking lp to generate rewards
-            // Start staking lp to generate rewards
-            if (!whetherToOpen && _balances[address(stc)] >= lpDividendsStartToRewardNum) {
-                IStorageTokenContract(address(stc)).notifyRewardAmount(rewardPerSecond);
-                whetherToOpen = true;
-            }
 
+            /// @dev Satisfy the upper limit injection lp
+            if (_balances[address(this)] >= tokensSellToAddToLiquidityNum) swapAndLiquify();
+
+            // Start staking lp to generate rewards
+            /*if (ldContractAmount >= lpDividendsStartToRewardNum) {
+                uint256 oldBalances = _balances[address(this)];
+                ILpDividend(lp).transferToken(address(this));
+                swapTokensForUsdt(oldBalances, lp);
+                ILpDividend(lp).notifyRewardAmount(rewardPerSecond);
+            }*/
 
             uint256 dividendFee_ = amount.div(_denominatorOfFee).mul(_dividendFee);
             uint256 liquidityFee_ = amount.div(_denominatorOfFee).mul(_liquidityFee);
@@ -575,7 +603,8 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
             // Transfer to the token contract and wait for the injection of liquidity
             _tokenTransfer(from, address(this), dividendFee_);
             // Transfer to the fund management contract and wait for lp dividends
-            _tokenTransfer(from, address(stc), liquidityFee_);
+            _tokenTransfer(from, lp, liquidityFee_);
+            ldContractAmount += liquidityFee_;
             // The original amount minus the amount of destruction, and the rest is transferred to the user's address
             _tokenTransfer(from, to, amount.sub(dividendFee_ + liquidityFee_));
 
@@ -593,7 +622,7 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
         uint256 initialBalance = husdtTokenAddress.balanceOf(address(this));
 
         // address(this) token -> address(stc) usdt -> address(this) usdt
-        uint256 half = swapTokensForUsdt(tokenAmount);
+        uint256 half = swapTokensForUsdt(tokenAmount, address(this));
 
         // add lp
         uint256 newBalance = addLiquidityUSDT(initialBalance, half);
@@ -607,17 +636,13 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     * @param tokenAmount Exact other half quantity
     * @return Amount of tokens injected into liquidity
     */
-    function swapTokensForUsdt(uint256 tokenAmount) private nonReentrant returns (uint256){
+    function swapTokensForUsdt(uint256 tokenAmount, address to) private nonReentrant returns (uint256){
         uint256 tokenAmountTwo = _balances[address(this)].sub(tokenAmount);
-        //token -> usdt
-        address[] memory path = new address[](2);
-        path[0] = address(this);
-        path[1] = address(husdtTokenAddress);
 
         _approve(address(this), pancakeRouterAddress, tokenAmountTwo);
 
         //token:address(this) token -> address(uniswapV2Pair)
-        //usdt:address(uniswapV2Pair) token -> address(stc)
+        //usdt:address(uniswapV2Pair) token -> address(to)
         _uniswapV2Router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
             tokenAmountTwo,
             0, // accept any amount of usdt
@@ -626,8 +651,8 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
             block.timestamp
         );
 
-        //usdt:address(stc) -> address(this)
-        IStorageTokenContract(address(stc)).werewolfKillWithdraw();
+        //usdt:address(stc) -> address(to)
+        IStorageTokenContract(stc).transferToken(to);
 
         return tokenAmountTwo;
     }
@@ -641,17 +666,13 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     function addLiquidityUSDT(uint256 initialBalance, uint256 half) private nonReentrant returns (uint256){
         uint256 usdtAmount = (husdtTokenAddress.balanceOf(address(this))).sub(initialBalance);
 
-        address[] memory path = new address[](2);
-        path[0] = address(this);
-        path[1] = address(husdtTokenAddress);
-
         uint256[] memory tokenAmount = _uniswapV2Router.getAmountsOut(half, path);
 
         _approve(address(this), pancakeRouterAddress, tokenAmount[0]);
         husdtTokenAddress.safeApprove(pancakeRouterAddress, tokenAmount[1]);
 
-        //token:address(this) token -> address(uniswapV2Pair)
-        //usdt:address(this) token -> address(uniswapV2Pair)
+        //token:address(this) -> address(uniswapV2Pair)
+        //usdt:address(this) -> address(uniswapV2Pair)
         _uniswapV2Router.addLiquidity(
             path[0],
             path[1],
@@ -728,14 +749,6 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     }
 
     /**
-    * @dev Set TokensSellToAddToLiquidityNum
-    * @param newNum new tokensSellToAddToLiquidityNum
-    */
-    function setTokensSellToAddToLiquidityNum(uint256 newNum) public onlyOwner {
-        tokensSellToAddToLiquidityNum = newNum;
-    }
-
-    /**
     * @dev Set excludedFromFee
     * @param accounts Account list
     * @param state Account state
@@ -744,6 +757,54 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
         for (uint256 i = 0; i < accounts.length; i++) {
             _isExcludedFromFee[accounts[i]] = state;
         }
+    }
+
+    /**
+    * @dev Set the storageTokenContract contract address
+    * @param newStc New storageTokenContract contract address
+    */
+    function setStc(address newStc) public onlyOwner {
+        stc = newStc;
+    }
+
+    /**
+    * @dev Set lpDividend contract address
+    * @param newLp New lpDividend contract address
+    */
+    function setLp(address newLp) public onlyOwner {
+        lp = newLp;
+    }
+
+    /**
+    * @dev Set up a new dividendFee
+    * @param newDividendFee New dividendFee
+    */
+    function setDividendFee(uint256 newDividendFee) public onlyOwner {
+        _dividendFee = newDividendFee;
+    }
+
+    /**
+    * @dev Set up a new liquidityFee
+    * @param newLiquidityFee New liquidityFee
+    */
+    function setLiquidityFee(uint256 newLiquidityFee) public onlyOwner {
+        _liquidityFee = newLiquidityFee;
+    }
+
+    /**
+    * @dev Set TokensSellToAddToLiquidityNum
+    * @param newNum new tokensSellToAddToLiquidityNum(decimal!!)
+    */
+    function setTokensSellToAddToLiquidityNum(uint256 newNum) public onlyOwner {
+        tokensSellToAddToLiquidityNum = newNum * 10 ** decimals();
+    }
+
+    /**
+    * @dev Set lpDividendsStartToRewardNum
+    * @param newNum new lpDividendsStartToRewardNum(decimal!!)
+    */
+    function setLpDividendsStartToRewardNum(uint256 newNum) public onlyOwner {
+        lpDividendsStartToRewardNum = newNum * 10 ** decimals();
     }
 
     /**
@@ -789,9 +850,6 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     * @param tokenAmount Token amount
     */
     function getAmountInOrOut(bool tokenOrUsdt, uint256 tokenAmount) public view returns (uint256 rAmount){
-        address[] memory path = new address[](2);
-        path[0] = address(this);
-        path[1] = address(husdtTokenAddress);
 
         if (tokenOrUsdt) {
             rAmount = _uniswapV2Router.getAmountsOut(tokenAmount, path)[1];
@@ -812,10 +870,6 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
         _transfer(_msgSender(), address(this), tokenAmount);
         husdtTokenAddress.safeTransferFrom(_msgSender(), address(this), usdtAmount);
 
-        address[] memory path = new address[](2);
-        path[0] = address(this);
-        path[1] = address(husdtTokenAddress);
-
         _approve(address(this), pancakeRouterAddress, tokenAmount);
         husdtTokenAddress.safeApprove(pancakeRouterAddress, usdtAmount);
 
@@ -829,27 +883,30 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
             _msgSender(),
             block.timestamp
         );
-        emit UserLiquify(tokenAmount, usdtAmount);
+        emit UserAddLiquify(tokenAmount, usdtAmount);
 
     }
 }
 
-// @title Token transfer and pledge lp to obtain token rewards
-contract StorageTokenContract is ReentrancyGuard, Ownable {
+/// @title Lp dividend contract
+/// @author Long
+/// @notice This contract is only for lp dividend operation
+contract lpDividend is ReentrancyGuard, Ownable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
 
-    address werewolfKill;
-
-    IERC20 public  husdtTokenAddress;
     /* ========== STATE VARIABLES ========== */
 
+    IERC20 public token;
     IERC20 public rewardsToken;
     IERC20 public stakingToken;
+
     uint256 public periodFinish = 0;
     uint256 public rewardRate = 0;
     uint256 public lastUpdateTime;
     uint256 public rewardPerTokenStored;
+
+    mapping(address => bool) public blacklist;
 
     mapping(address => uint256) public userRewardPerTokenPaid;
     mapping(address => uint256) public rewards;
@@ -860,17 +917,11 @@ contract StorageTokenContract is ReentrancyGuard, Ownable {
     /* ========== CONSTRUCTOR ========== */
 
     constructor(
-        address _stakingToken,
-        address tokenOwner,
-        address _werewolfKill,
-        IERC20 _husdtTokenAddress
+        IERC20 _stakingToken,
+        IERC20 _rewardsToken
     ) {
-        husdtTokenAddress = _husdtTokenAddress;
-        werewolfKill = _werewolfKill;
-        husdtTokenAddress.safeApprove(_werewolfKill, ~uint256(0));
-        transferOwnership(tokenOwner);
-        rewardsToken = IERC20(_werewolfKill);
-        stakingToken = IERC20(_stakingToken);
+        rewardsToken = _rewardsToken;
+        stakingToken = _stakingToken;
     }
 
     /* ========== VIEWS ========== */
@@ -905,6 +956,7 @@ contract StorageTokenContract is ReentrancyGuard, Ownable {
 
     function stake(uint256 amount) external nonReentrant updateReward(_msgSender()) {
         require(amount > 0, "Cannot stake 0");
+        require(!blacklist[_msgSender()], "is blacklist");
         _totalSupply = _totalSupply.add(amount);
         _balances[_msgSender()] = _balances[_msgSender()].add(amount);
         stakingToken.safeTransferFrom(_msgSender(), address(this), amount);
@@ -913,6 +965,7 @@ contract StorageTokenContract is ReentrancyGuard, Ownable {
 
     function withdraw(uint256 amount) public nonReentrant updateReward(_msgSender()) {
         require(amount > 0, "Cannot withdraw 0");
+        require(!blacklist[_msgSender()], "is blacklist");
         _totalSupply = _totalSupply.sub(amount);
         _balances[_msgSender()] = _balances[_msgSender()].sub(amount);
         stakingToken.safeTransfer(_msgSender(), amount);
@@ -920,6 +973,7 @@ contract StorageTokenContract is ReentrancyGuard, Ownable {
     }
 
     function getReward() public nonReentrant updateReward(_msgSender()) {
+        require(!blacklist[_msgSender()], "is blacklist");
         uint256 reward = rewards[_msgSender()];
         if (reward > 0) {
             rewards[_msgSender()] = 0;
@@ -935,30 +989,51 @@ contract StorageTokenContract is ReentrancyGuard, Ownable {
 
     /* ========== RESTRICTED FUNCTIONS ========== */
 
-    function werewolfKillWithdraw() public {
-        require(_msgSender() == werewolfKill, "WK:not allowed");
-        uint256 balance = husdtTokenAddress.balanceOf(address(this));
-        husdtTokenAddress.safeTransfer(werewolfKill, balance);
+    function setBlacklist(address[] calldata userAddrs, bool condition) public onlyOwner {
+        for (uint256 i; i < userAddrs.length; i++) {
+            blacklist[userAddrs[i]] = condition;
+        }
     }
 
-    function notifyRewardAmount(uint256 reward) external updateReward(address(0)) {
-        require(werewolfKill == _msgSender(), "STC:not allowed");
+    function setUserReward(address userAddr, uint256 amount) public onlyOwner {
+        rewardPerTokenStored = rewardPerToken();
+        lastUpdateTime = lastTimeRewardApplicable();
+        if (userAddr != address(0)) {
+            rewards[userAddr] = amount;
+            userRewardPerTokenPaid[userAddr] = rewardPerTokenStored;
+        }
+    }
+
+    function notifyRewardAmount(uint256 reward, uint256 timestamp) external updateReward(address(0)) {
+        require(address(token) == _msgSender() || owner() == _msgSender(), "STC:not allowed");
         rewardRate = reward;
 
         lastUpdateTime = block.timestamp;
-        periodFinish = block.timestamp.add(99999 days);
+        periodFinish = block.timestamp.add(timestamp);
         emit RewardAdded(reward);
     }
 
+    function setWerewolfKillToken(IERC20 _token) public onlyOwner {
+        token = _token;
+        _token.safeApprove(address(_token), ~uint(0));
+    }
+
+    function transferToken(address contractAddr) external returns (uint256 balance) {
+        require(address(token) == _msgSender(), "TT:not allowed");
+        balance = token.balanceOf(address(this));
+        token.safeTransfer(contractAddr, balance);
+    }
+
     function claimTokens(
-        address token,
+        address tokenAddress,
+        address to,
         uint256 amount
     ) public onlyOwner {
         if (amount > 0) {
-            if (token == address(0)) {
-                payable(owner()).transfer(amount);
+            if (tokenAddress == address(0)) {
+                payable(to).transfer(amount);
             } else {
-                IERC20(token).safeTransfer(owner(), amount);
+                IERC20(tokenAddress).safeTransfer(to, amount);
             }
         }
     }
@@ -981,4 +1056,22 @@ contract StorageTokenContract is ReentrancyGuard, Ownable {
     event Staked(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
     event RewardPaid(address indexed user, uint256 reward);
+}
+
+/// @title Usdt distribution contract
+/// @author Long
+/// @notice This contract is only used for Usdt transfer
+contract storageTokenContract is Ownable {
+    using SafeERC20 for IERC20;
+
+    IERC20 token;
+    constructor(IERC20 _token) {
+        token = _token;
+        _token.safeApprove(owner(), ~uint256(0));
+    }
+
+    function transferToken(address contractAddr) external onlyOwner returns (uint256 balance) {
+        balance = token.balanceOf(address(this));
+        token.safeTransfer(contractAddr, balance);
+    }
 }
