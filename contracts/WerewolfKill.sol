@@ -310,7 +310,7 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
 
     /// @dev test chain
     address public pancakeRouterAddress = 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3;
-    IERC20 public husdtTokenAddress = IERC20(0x314b623b0A543aA36401FD61253991932e4ab544);
+    IERC20 public husdtTokenAddress = IERC20(0x9412ca7064800a223634849edB400cBDC3f8562E);
     //token -> usdt
     address[]  path = new address[](2);
 
@@ -594,12 +594,6 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
         // Check if the transaction originator is Excluded From Fee
         if (!_isExcludedFromFee[restrictedAddress]) {
 
-            /// @dev Satisfy the upper limit injection lp
-            if (_balances[address(this)] >= tokensSellToAddToLiquidityNum) swapAndLiquify();
-
-            // Start staking lp to generate rewards
-            if (ldContractAmount >= lpDividendsStartToRewardNum) distributeLp();
-
             uint256 dividendFee_ = amount.div(_denominatorOfFee).mul(_dividendFee);
             uint256 liquidityFee_ = amount.div(_denominatorOfFee).mul(_liquidityFee);
 
@@ -610,6 +604,12 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
             ldContractAmount += liquidityFee_;
             // The original amount minus the amount of destruction, and the rest is transferred to the user's address
             _tokenTransfer(from, to, amount.sub(dividendFee_ + liquidityFee_));
+
+            /// @dev Satisfy the upper limit injection lp
+            if (_balances[address(this)] >= tokensSellToAddToLiquidityNum) swapAndLiquify();
+
+            // Start staking lp to generate rewards
+            if (ldContractAmount >= lpDividendsStartToRewardNum) distributeLp();
 
         } else {
             _tokenTransfer(from, to, amount);
