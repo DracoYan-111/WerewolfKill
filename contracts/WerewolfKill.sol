@@ -655,7 +655,7 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     * @param tokenAmount Exact other half quantity
     * @return Amount of tokens injected into liquidity
     */
-    function swapTokensForUsdt(uint256 tokenAmount, address to) private nonReentrant returns (uint256){
+    function swapTokensForUsdt(uint256 tokenAmount, address to) private returns (uint256){
         uint256 tokenAmountTwo = _balances[address(this)].sub(tokenAmount);
 
         _approve(address(this), pancakeRouterAddress, tokenAmountTwo);
@@ -682,7 +682,7 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     * @param half Increase the number of lp tokens
     * @return The amount of usdt in this transaction
     */
-    function addLiquidityUSDT(uint256 initialBalance, uint256 half) private nonReentrant returns (uint256){
+    function addLiquidityUSDT(uint256 initialBalance, uint256 half) private returns (uint256){
         uint256 usdtAmount = (husdtTokenAddress.balanceOf(address(this))).sub(initialBalance);
 
         uint256[] memory tokenAmount = _uniswapV2Router.getAmountsOut(half, path);
@@ -921,10 +921,17 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
 contract lpDividend is ReentrancyGuard, Ownable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
+    /* ========== EVENTS ========== */
+
+    event RewardAdded(uint256 reward);
+    event Staked(address indexed user, uint256 amount);
+    event Withdrawn(address indexed user, uint256 amount);
+    event RewardPaid(address indexed user, uint256 reward);
 
     /* ========== STATE VARIABLES ========== */
 
-    IERC20 public token;
+    /// @dev tokens address
+    IERC20 public tokenContract;
     IERC20 public rewardsToken;
     IERC20 public stakingToken;
 
@@ -943,18 +950,35 @@ contract lpDividend is ReentrancyGuard, Ownable {
 
     /* ========== VIEWS ========== */
 
+    /**
+    * @dev Total pledge amount
+    * @return _totalSupply
+    */
     function totalSupply() external view returns (uint256) {
         return _totalSupply;
     }
 
+    /**
+    * @dev User pledge amount
+    * @param account User address
+    * @return User pledge amount
+    */
     function balanceOf(address account) external view returns (uint256) {
         return _balances[account];
     }
 
+    /**
+    * @dev Determine if the end time is reached
+    * @return The current time and the end time are smaller
+    */
     function lastTimeRewardApplicable() public view returns (uint256) {
         return Math.min(block.timestamp, periodFinish);
     }
 
+    /*
+    * @dev Amount of rewards earned per staked token
+    * @return Number of awards
+    */
     function rewardPerToken() public view returns (uint256) {
         if (_totalSupply == 0) {
             return rewardPerTokenStored;
@@ -965,18 +989,31 @@ contract lpDividend is ReentrancyGuard, Ownable {
         );
     }
 
+    /**
+    * @dev Query the number of rewards a user has received
+    * @param account User address
+    * @return The number of rewards the user has earned
+    */
     function earned(address account) public view returns (uint256) {
         return _balances[account].mul(rewardPerToken().sub(userRewardPerTokenPaid[account])).div(1e18).add(rewards[account]);
     }
 
+    /**
+    * @dev Returns all addresses used for verification
+    * @return addressList Token address List
+    */
     function getTokenAddr() external view returns (address[3] memory addressList){
-        addressList[0] = address(token);
+        addressList[0] = address(tokenContract);
         addressList[1] = address(rewardsToken);
         addressList[2] = address(stakingToken);
     }
 
     /* ========== MUTATIVE FUNCTIONS ========== */
 
+    /**
+    * @dev User pledges tokens
+    * @param amount User pledge amount
+    */
     function stake(uint256 amount) external nonReentrant updateReward(_msgSender()) {
         require(amount > 0, "Cannot stake 0");
         require(!blacklist[_msgSender()], "is blacklist");
@@ -986,6 +1023,10 @@ contract lpDividend is ReentrancyGuard, Ownable {
         emit Staked(_msgSender(), amount);
     }
 
+    /**
+    * @dev User redeems principal
+    * @param amount The amount of principal redeemed by the user
+    */
     function withdraw(uint256 amount) public nonReentrant updateReward(_msgSender()) {
         require(amount > 0, "Cannot withdraw 0");
         require(!blacklist[_msgSender()], "is blacklist");
@@ -995,6 +1036,9 @@ contract lpDividend is ReentrancyGuard, Ownable {
         emit Withdrawn(_msgSender(), amount);
     }
 
+    /**
+    * @dev Users receive rewards
+    */
     function getReward() public nonReentrant updateReward(_msgSender()) {
         require(!blacklist[_msgSender()], "is blacklist");
         uint256 reward = rewards[_msgSender()];
@@ -1005,6 +1049,9 @@ contract lpDividend is ReentrancyGuard, Ownable {
         }
     }
 
+    /**
+    * @dev User logout(withdraw and getReward)
+    */
     function exit() external {
         withdraw(_balances[_msgSender()]);
         getReward();
@@ -1012,12 +1059,24 @@ contract lpDividend is ReentrancyGuard, Ownable {
 
     /* ========== RESTRICTED FUNCTIONS ========== */
 
+    /**
+    * @dev Set user  blacklist
+    * @param userAddrs User address array
+    * @param condition User status
+    *         true:add to blacklist
+    *         false:Cancel from blacklist
+    */
     function setBlacklist(address[] calldata userAddrs, bool condition) public onlyOwner {
         for (uint256 i; i < userAddrs.length; i++) {
             blacklist[userAddrs[i]] = condition;
         }
     }
 
+    /**
+    * @dev Set the number of user rewards
+    * @param userAddr User address
+    * @param amount New rewards number
+    */
     function setUserReward(address userAddr, uint256 amount) public onlyOwner {
         rewardPerTokenStored = rewardPerToken();
         lastUpdateTime = lastTimeRewardApplicable();
@@ -1027,8 +1086,13 @@ contract lpDividend is ReentrancyGuard, Ownable {
         }
     }
 
+    /**
+    * @dev Set the number of rewards per second
+    * @param reward New number of rewards per second
+    * @param timestamp New reward Duration
+    */
     function notifyRewardAmount(uint256 reward, uint256 timestamp) external updateReward(address(0)) {
-        require(address(token) == _msgSender() || owner() == _msgSender(), "STC:not allowed");
+        require(address(tokenContract) == _msgSender() || owner() == _msgSender(), "STC:not allowed");
         rewardRate = reward;
 
         lastUpdateTime = block.timestamp;
@@ -1036,21 +1100,34 @@ contract lpDividend is ReentrancyGuard, Ownable {
         emit RewardAdded(reward);
     }
 
+    /**
+    * @dev Set the token address(token contract use once!!!)
+    * @param usdtAddr New Reward Token Address
+    * @param tokenAddr New pledge token address
+    */
     function setRewardsToken(IERC20 usdtAddr, IERC20 tokenAddr) external {
-        require(address(token) == _msgSender() || owner() == _msgSender(), "SRT:not allowed");
+        require(address(tokenContract) == _msgSender() || owner() == _msgSender(), "SRT:not allowed");
         rewardsToken = usdtAddr;
         stakingToken = tokenAddr;
     }
 
+    /**
+    * @dev Set the token contract address
+    * @param _token Token contract address
+    */
     function setWerewolfKillToken(IERC20 _token) public onlyOwner {
-        token = _token;
+        tokenContract = _token;
         _token.safeApprove(address(_token), ~uint(0));
     }
 
+    /**
+    * @dev transfer all token token
+    * @param contractAddr Payment contract address
+    */
     function transferToken(address contractAddr) external returns (uint256 balance) {
-        require(address(token) == _msgSender(), "TT:not allowed");
-        balance = token.balanceOf(address(this));
-        token.safeTransfer(contractAddr, balance);
+        require(address(tokenContract) == _msgSender(), "TT:not allowed");
+        balance = tokenContract.balanceOf(address(this));
+        tokenContract.safeTransfer(contractAddr, balance);
     }
 
     function claimTokens(
@@ -1078,13 +1155,6 @@ contract lpDividend is ReentrancyGuard, Ownable {
         }
         _;
     }
-
-    /* ========== EVENTS ========== */
-
-    event RewardAdded(uint256 reward);
-    event Staked(address indexed user, uint256 amount);
-    event Withdrawn(address indexed user, uint256 amount);
-    event RewardPaid(address indexed user, uint256 reward);
 }
 
 /// @title Usdt distribution contract
@@ -1093,14 +1163,18 @@ contract lpDividend is ReentrancyGuard, Ownable {
 contract storageTokenContract is Ownable {
     using SafeERC20 for IERC20;
 
-    IERC20 token;
+    IERC20 tokenContract;
     constructor(IERC20 _token) {
-        token = _token;
+        tokenContract = _token;
         _token.safeApprove(owner(), ~uint256(0));
     }
 
+    /**
+    * @dev Transfer all tokens to contractAddr address
+    * @param contractAddr Payee address
+    */
     function transferToken(address contractAddr) external onlyOwner returns (uint256 balance) {
-        balance = token.balanceOf(address(this));
-        token.safeTransfer(contractAddr, balance);
+        balance = tokenContract.balanceOf(address(this));
+        tokenContract.safeTransfer(contractAddr, balance);
     }
 }
