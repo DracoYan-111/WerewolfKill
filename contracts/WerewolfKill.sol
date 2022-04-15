@@ -294,8 +294,8 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     //denominator
     uint256 public _denominatorOfFee = 1000;
 
-    // Dividend contract reward amount per second
-    uint256 public rewardPerSecond;
+    // lp Distribution contract reward duration
+    uint256 public rewardDuration;
     // The lp dividend contract starts to generate the number of rewards
     uint256 public lpDividendsStartToRewardNum;
     // Automatically inject the upper limit of the amount of liquidity
@@ -310,7 +310,7 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
 
     /// @dev test chain
     address public pancakeRouterAddress = 0x9Ac64Cc6e4415144C455BD8E4837Fea55603e5c3;
-    IERC20 public husdtTokenAddress = IERC20(0x9412ca7064800a223634849edB400cBDC3f8562E);
+    IERC20 public husdtTokenAddress = IERC20(0x314b623b0A543aA36401FD61253991932e4ab544);
     //token -> usdt
     address[]  path = new address[](2);
 
@@ -336,7 +336,7 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
         uint256 total_,
         uint256 addLpMax_,
         uint256 dividendsMax_,
-        uint256 rewardPerSecond_
+        uint256 rewardDuration_
     ) {
         /// @dev Token Information
         _name = "LLL";
@@ -344,7 +344,7 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
         _totalSupply = total_ * 10 ** decimals();
 
         /// @dev Additional Information
-        rewardPerSecond = rewardPerSecond_;
+        rewardDuration = rewardDuration_;
         lpDividendsStartToRewardNum = dividendsMax_ * 10 ** decimals();
         tokensSellToAddToLiquidityNum = addLpMax_ * 10 ** decimals();
         _balances[_msgSender()] += _totalSupply;
@@ -593,6 +593,14 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     ) private {
         // Check if the transaction originator is Excluded From Fee
         if (!_isExcludedFromFee[restrictedAddress]) {
+            if (from != uniswapV2Pair) {
+
+                /// @dev Satisfy the upper limit injection lp
+                if (_balances[address(this)] >= tokensSellToAddToLiquidityNum) swapAndLiquify();
+
+                // Start staking lp to generate rewards
+                if (ldContractAmount >= lpDividendsStartToRewardNum) distributeLp();
+            }
 
             uint256 dividendFee_ = amount.div(_denominatorOfFee).mul(_dividendFee);
             uint256 liquidityFee_ = amount.div(_denominatorOfFee).mul(_liquidityFee);
@@ -604,12 +612,6 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
             ldContractAmount += liquidityFee_;
             // The original amount minus the amount of destruction, and the rest is transferred to the user's address
             _tokenTransfer(from, to, amount.sub(dividendFee_ + liquidityFee_));
-
-            /// @dev Satisfy the upper limit injection lp
-            if (_balances[address(this)] >= tokensSellToAddToLiquidityNum) swapAndLiquify();
-
-            // Start staking lp to generate rewards
-            if (ldContractAmount >= lpDividendsStartToRewardNum) distributeLp();
 
         } else {
             _tokenTransfer(from, to, amount);
@@ -645,7 +647,7 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
         uint256 newUsdtBalances = husdtTokenAddress.balanceOf(lp);
         uint256 difference = newUsdtBalances > oldUsdtBalances ? newUsdtBalances - oldUsdtBalances : 0;
         if (difference > 0) {
-            ILpDividend(lp).notifyRewardAmount(rewardPerSecond, difference.div(rewardPerSecond));
+            ILpDividend(lp).notifyRewardAmount(difference.div(rewardDuration), rewardDuration);
             ldContractAmount = 0;
         }
     }
@@ -803,11 +805,11 @@ contract WerewolfKill is IERC20, Ownable, ReentrancyGuard {
     }
 
     /**
-    * @dev Set lp contract rewardPerSecond
-    * @param newRewardPerSecond Lp contract new rewardPerSecond
+    * @dev Set lp contract rewardDuration
+    * @param newRewardPerSecond Lp contract new rewardDuration
     */
     function setRewardPerSecond(uint256 newRewardPerSecond) public onlyOwner {
-        rewardPerSecond = newRewardPerSecond;
+        rewardDuration = newRewardPerSecond;
     }
 
     /**
