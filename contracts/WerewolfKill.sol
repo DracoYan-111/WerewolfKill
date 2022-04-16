@@ -1075,20 +1075,6 @@ contract lpDividend is ReentrancyGuard, Ownable {
     }
 
     /**
-    * @dev Set the number of user rewards
-    * @param userAddr User address
-    * @param amount New rewards number
-    */
-    function setUserReward(address userAddr, uint256 amount) public onlyOwner {
-        rewardPerTokenStored = rewardPerToken();
-        lastUpdateTime = lastTimeRewardApplicable();
-        if (userAddr != address(0)) {
-            rewards[userAddr] = amount;
-            userRewardPerTokenPaid[userAddr] = rewardPerTokenStored;
-        }
-    }
-
-    /**
     * @dev Set the number of rewards per second
     * @param reward New number of rewards per second
     * @param timestamp New reward Duration
