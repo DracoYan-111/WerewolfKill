@@ -19,19 +19,19 @@ contract seedTokenPool is Ownable, ReentrancyGuard {
 
 
     struct UserPledge {
-        // 质押金额
+        // pledge amount
         uint256 pledgeAmount;
-        // 质押时间
+        // pledge time
         uint256 pledgeTime;
-        // 质押结束时间
+        // pledge end time
         uint256 pledgeDuration;
-        // 奖励结束时间
+        // Reward end time
         uint256 rewardDuration;
-        // 上次操作时间
+        // last operation time
         uint256 lastOperationTime;
-        // 每秒奖励数量
+        // Number of rewards per second
         uint256 numberOfRewardsPerSecond;
-        // 每秒缓释数量
+        // Number of sustained releases per second
         uint256 numberOfSustainedReleasesPerSecond;
     }
 
@@ -41,18 +41,22 @@ contract seedTokenPool is Ownable, ReentrancyGuard {
     uint256[] public lengthOfTime;
     uint256[] public rewardMultiplier;
 
-    /// @dev 代币信息
+    /// @dev Token Information
     IERC20 public rewardsToken;
     IERC20 public stakingToken;
 
-    /// @dev
+    /// @dev Project information
     uint256 public singleMonth = 30 days;
     uint256 public constant unit = 10;
-
-    /// @dev
+    bool public isReward = false;
+    mapping(address => bool) public _blackList;
     uint256 private _totalSupply;
 
 
+    /**
+    * @param rewardsToken_ Reward Token Address
+    * @param stakingToken_ Staking token address
+    */
     constructor(
         IERC20 rewardsToken_,
         IERC20 stakingToken_
@@ -77,15 +81,13 @@ contract seedTokenPool is Ownable, ReentrancyGuard {
     }
 
     /**
-    * @dev 每秒本金数量
-    *
-    *
-    *
+    * @dev User principal amount
+    * @param subscript User pledge duration array subscript
     */
     function userPrincipalAmount(uint256 subscript) public view returns (uint256){
         UserPledge memory userData_ = userData[_msgSender()][lengthOfTime[subscript]];
 
-        require(userData_.pledgeAmount > 0, "!");
+        if (userData_.pledgeAmount == 0) return 0;
 
         if (userData_.pledgeTime == userData_.pledgeDuration) return userData_.numberOfSustainedReleasesPerSecond;
 
@@ -99,11 +101,8 @@ contract seedTokenPool is Ownable, ReentrancyGuard {
     }
 
     /**
-    * @dev 用户每秒奖励
-    *
-    *
-    *
-    *
+    * @dev Number of user rewards
+    * @param subscript User pledge duration array subscript
     */
     function userAwardAmount(uint256 subscript) public view returns (uint256){
         UserPledge memory userData_ = userData[_msgSender()][lengthOfTime[subscript]];
@@ -117,12 +116,12 @@ contract seedTokenPool is Ownable, ReentrancyGuard {
         );
     }
 
-    // ==================== SET ====================
+    // ==================== USER USE ====================
 
     /**
-    * @dev 用户质押
-    * @param amount 用户质押数量
-    * @param subscript 用户质押时长数组下标
+    * @dev User pledge
+    * @param amount User pledge amount
+    * @param subscript User pledge duration array subscript
     */
     function stake(
         uint256 amount,
@@ -152,50 +151,82 @@ contract seedTokenPool is Ownable, ReentrancyGuard {
 
         uint256 rewardDuration_ = block.timestamp.add(lengthOfTime[subscript]);
 
-        // 质押数量
         userData_.pledgeAmount = amount;
-        // 质押时间
         userData_.pledgeTime = block.timestamp;
-        // 质押结束时间
         userData_.pledgeDuration = pledgeDuration_;
-        // 奖励结束时间
         userData_.rewardDuration = rewardDuration_;
-        // 上次操作时间
         userData_.lastOperationTime = rewardDuration_;
-        // 每秒奖励数量
         userData_.numberOfRewardsPerSecond = numberOfRewardsPerSecond_;
-        // 每秒缓释数量
         userData_.numberOfSustainedReleasesPerSecond = numberOfSustainedReleasesPerSecond_;
 
         emit UserPledgeData(_msgSender(), amount, lengthOfTime[subscript]);
     }
 
     /**
-    * @dev 用户提取本金
-    * @param subscript 用户质押时长数组下标
+    * @dev User withdraws principal
+    * @param subscript User pledge duration array subscript
     */
     function withdraw(uint256 subscript) public {
         UserPledge storage userData_ = userData[_msgSender()][lengthOfTime[subscript]];
         require(userData_.pledgeAmount >= 0, "Not pledged this month");
-        uint256 benjin = userPrincipalAmount(subscript);
-        require(benjin > 0, "no reward");
-        userData_.pledgeAmount -= benjin;
+        uint256 principal = userPrincipalAmount(subscript);
+        require(principal > 10000, "too little principal");
+        userData_.pledgeAmount -= principal;
         _totalSupply -= amount;
         userData_.lastOperationTime = block.timestamp;
-        // stakingToken.safeTransfer(_msgSender,benjin);
-        emit UserWithdrawData(_msgSender(), benjin, block.timestamp);
+        // stakingToken.safeTransfer(_msgSender,principal);
+        emit UserWithdrawData(_msgSender(), principal, block.timestamp);
     }
 
     /**
-    * @dev 用户提取奖励
-    * @param subscript 用户质押时长数组下标
+    * @dev User Withdrawal Rewards
+    * @param subscript User pledge duration array subscript
     */
     function getReward(uint256 subscript) public {
+        require(isReward, "Rewards not enabled");
         UserPledge memory userData_ = userData[_msgSender()][lengthOfTime[subscript]];
         require(userData_.pledgeAmount >= 0, "Not pledged this month");
-        uint256 jiangli = userAwardAmount(subscript);
-        require(jiangli > 0, "no reward");
-        // rewardsToken.safeTransfer(_msgSender,jiangli);
-        emit UserRewardData(_msgSender(), jiangli, block.timestamp);
+        uint256 award = userAwardAmount(subscript);
+        require(award > 10000, "Too little reward");
+        // rewardsToken.safeTransfer(_msgSender,award);
+        emit UserRewardData(_msgSender(), award, block.timestamp);
+    }
+
+    // ==================== OWNER USE ====================
+    /**
+    * @dev Set rewards on or off
+    * @param newIsReward Reward claim status
+    */
+    function setIsReward(bool newIsReward) public onlyOwner {
+        isReward = newIsReward;
+    }
+
+    /**
+    * @dev Set up blacklist users
+    * @param account User address
+    * @param state User status
+    */
+    function setBlack(address account, bool state) public onlyOwner {
+        _blackList[account] = state;
+    }
+
+    /**
+    * @dev get tokens
+    * @param tokenAddress Get token address
+    * @param to Payee Address
+    * @param amount Get quantity
+    */
+    function claimTokens(
+        address tokenAddress,
+        address to,
+        uint256 amount
+    ) public onlyOwner {
+        if (amount > 0) {
+            if (tokenAddress == address(0)) {
+                payable(to).transfer(amount);
+            } else {
+                IERC20(tokenAddress).safeTransfer(to, amount);
+            }
+        }
     }
 }
